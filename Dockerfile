@@ -11,11 +11,15 @@ RUN apt-get update && apt-get install -y libcurl4-openssl-dev \
 # cara ini pasti. Setelah itu tepat satu MPM dinyalakan kembali (mpm_prefork, yang
 # dibutuhkan mod_php). Baris terakhir mencetak MPM yang aktif ke build log supaya
 # kondisinya bisa dilihat, bukan ditebak.
-RUN rm -f /etc/apache2/mods-enabled/mpm_*.load \
-          /etc/apache2/mods-enabled/mpm_*.conf \
-    && a2enmod mpm_prefork rewrite \
-    && echo "=== MPM aktif: ===" \
-    && ls -1 /etc/apache2/mods-enabled/ | grep mpm
+RUN set -eu; \
+    rm -f /etc/apache2/mods-enabled/mpm_*.load /etc/apache2/mods-enabled/mpm_*.conf; \
+    a2enmod mpm_prefork rewrite; \
+    echo "=== [1] symlink MPM di mods-enabled ==="; \
+    ls -1 /etc/apache2/mods-enabled/ | grep -i mpm || echo "(kosong)"; \
+    echo "=== [2] SEMUA baris LoadModule mpm di /etc/apache2 ==="; \
+    grep -RIn -i "loadmodule.*mpm" /etc/apache2/ || echo "(tidak ada)"; \
+    echo "=== [3] modul yang benar-benar dimuat Apache ==="; \
+    apache2ctl -M 2>&1 | grep -i mpm || true
 
 COPY . /var/www/html/
 
