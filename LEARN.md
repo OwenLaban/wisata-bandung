@@ -257,10 +257,47 @@ baru ketahuan saat sertifikat mati.
 | RAM terpakai | 79 MB (app 11,8 + db 67) |
 | gondangfarm | tetap normal |
 
+### Efek samping: perpanjangan sertifikat gondangfarm ikut diperbaiki
+
+Saat menyiapkan sertifikat wisata, ketahuan bahwa sertifikat **gondangfarm** akan
+kedaluwarsa 6 Agustus 2026 dan perpanjangan otomatisnya **sudah rusak sejak lama**:
+
+```
+Failed to renew certificate gondangfarm.duckdns.org with error:
+Could not bind TCP port 80 because it is already in use by another process
+```
+
+Penyebabnya sama persis — `authenticator = standalone` sementara port 80 dipegang nginx.
+Dulu berhasil karena saat sertifikat pertama dibuat, nginx belum berjalan. Sejak nginx
+permanen, setiap percobaan perpanjangan gagal diam-diam selama berbulan-bulan.
+
+Diperbaiki dengan cara yang sama (`--webroot`), tanpa mengubah `nginx.conf` maupun
+compose gondangfarm sama sekali — blok `location /` di sana sudah menyajikan file dari
+volume frontend, jadi certbot cukup menaruh file pembuktian di situ:
+
+```bash
+sudo certbot certonly --webroot \
+  -w /var/lib/docker/volumes/gondangfarm_frontend_build/_data \
+  -d gondangfarm.duckdns.org --force-renewal
+docker exec gondangfarm-nginx-1 nginx -s reload
+```
+
+Let's Encrypt **mengikuti redirect HTTP→HTTPS**, jadi `return 301` yang ada di blok :80
+gondangfarm tidak menghalangi pembuktian.
+
+Hasilnya kedua sertifikat berlaku sampai **31 Oktober 2026**, dan yang lebih penting:
+
+```
+Congratulations, all simulated renewals succeeded:
+  gondangfarm.duckdns.org/fullchain.pem (success)
+  wisatabandung.duckdns.org/fullchain.pem (success)
+```
+
+> **Pelajaran:** sertifikat yang masih berlaku bukan berarti perpanjangannya sehat.
+> Keduanya hal berbeda. Uji dengan `sudo certbot renew --dry-run` — jangan menunggu
+> sampai situs mendadak merah.
+
 ### Sisa pekerjaan
 
 - [ ] Isi `GOOGLE_MAPS_API_KEY` & `GROQ_API_KEY` di `~/wisata/.env` di VM, lalu
       `docker compose -f docker-compose.prod.yml up -d` untuk menerapkan
-- [ ] **Sertifikat gondangfarm kedaluwarsa 6 Agustus 2026** dan auto-renew-nya rusak
-      (`authenticator = standalone`, port 80 dipegang nginx). Sekarang sudah terbukti
-      `--webroot` berhasil di server ini — cara yang sama bisa dipakai untuk gondangfarm
