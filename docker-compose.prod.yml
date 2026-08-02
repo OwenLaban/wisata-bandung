@@ -1,0 +1,88 @@
+# Stack produksi untuk VM Azure (hydroponics-iot-server).
+#
+# Beda dari docker-compose.yml (dipakai untuk ngoprek di laptop):
+#   - Tidak ada `ports:` sama sekali. Port 80/443 sudah dipegang nginx milik
+#     gondangfarm; wisata diakses lewat nginx itu, bukan langsung.
+#   - `wisata-app` ikut network gondangfarm_default supaya nginx bisa memanggilnya.
+#   - MariaDB (bukan MySQL 8) dengan setelan hemat memori — VM cuma 1 GiB RAM.
+#   - mem_limit dipasang supaya kalau wisata bocor memori, yang mati wisata saja,
+#     bukan backend hidroponik yang sedang jalan.
+#
+# Jalankan:  docker compose -f docker-compose.prod.yml up -d --build
+
+name: wisata
+
+services:
+  app:
+    build: .
+    container_name: wisata-app
+    mem_limit: 128m
+    environment:
+      # WAJIB `wisata-db`, bukan `db`. Container ini ikut network gondangfarm_default,
+      # dan di sana sudah ada service bernama `db` (Postgres milik gondangfarm).
+      # Memakai `db` membuat DNS mengarah ke Postgres di port 5432 → Connection refused.
+      DB_HOST: wisata-db
+      DB_USER: wisata_user
+      DB_PASS: ${DB_PASSWORD}
+      DB_NAME: wisata_bandung
+      GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+    volumes:
+      # Tempat certbot menaruh file pembuktian kepemilikan domain (ACME HTTP-01).
+      # nginx meneruskan semua permintaan wisata ke container ini, jadi file di
+      # /.well-known/acme-challenge/ otomatis bisa diambil Let's Encrypt.
+      # Ini menghindari `--standalone` yang butuh port 80 — port itu dipegang nginx.
+      - ./webroot/.well-known:/var/www/html/.well-known:ro
+    depends_on:
+      wisata-db:
+        condition: service_healthy
+    networks:
+      - default
+      - gondangfarm
+    restart: unless-stopped
+
+  # Nama service sengaja `wisata-db`, bukan `db`, supaya alias DNS-nya unik.
+  wisata-db:
+    image: mariadb:11
+    container_name: wisata-db
+    mem_limit: 256m
+    # Setelan bawaan MariaDB mengasumsikan server lapang. Di VM 1 GiB itu boros,
+    # jadi buffer pool dikecilkan dan performance_schema dimatikan.
+    command: >
+      --innodb-buffer-pool-size=64M
+      --innodb-log-buffer-size=4M
+      --key-buffer-size=8M
+      --performance-schema=OFF
+      --max-connections=30
+      --tmp-table-size=8M
+      --max-heap-table-size=8M
+    environment:
+      MARIADB_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MARIADB_DATABASE: wisata_bandung
+      MARIADB_USER: wisata_user
+      MARIADB_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./docker/mysql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - default
+    restart: unless-stopped
+
+networks:
+  # Jaringan internal wisata: hanya app <-> db.
+  default:
+
+  # Jaringan milik gondangfarm, dipakai bersama supaya nginx bisa proxy ke
+  # wisata-app. `external: true` artinya compose ini memakai yang sudah ada,
+  # bukan membuat baru — dan tidak akan menghapusnya saat `compose down`.
+  gondangfarm:
+    external: true
+    name: gondangfarm_default
+
+volumes:
+  db_data:
