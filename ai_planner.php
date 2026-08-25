@@ -119,21 +119,42 @@ Setelah itinerary tambahkan TEPAT seperti ini:
 ##END_PLACES##
 Jangan masukkan restoran yang tidak ada di daftar ke PLACES_JSON. Jawab dalam Bahasa Indonesia.";
 
-$apiKey = defined('GROQ_API_KEY') ? GROQ_API_KEY : '';
+// Pemilihan penyedia AI.
+//
+// Groq memblokir wilayah tempat server produksi berada (Azure East Asia): setiap
+// permintaan dari sana dijawab 403 Forbidden bahkan sebelum API key diperiksa —
+// key palsu pun ditolak dengan cara yang sama. Jadi Groq tidak bisa dipakai dari
+// server, meski jalan normal dari komputer lokal.
+//
+// Gemini dipilih sebagai penyedia utama karena bisa diakses dari sana dan
+// menyediakan endpoint OpenAI-compatible, sehingga bentuk permintaan dan
+// pembacaan respons di bawah tidak perlu berubah.
+//
+// Groq tetap dipertahankan sebagai cadangan: kalau GEMINI_API_KEY kosong tapi
+// GROQ_API_KEY terisi, Groq yang dipakai. Berguna saat mengembangkan di laptop,
+// atau kalau server nanti pindah ke region yang tidak diblokir.
+$geminiKey = defined('GEMINI_API_KEY') ? GEMINI_API_KEY : '';
+$groqKey   = defined('GROQ_API_KEY')   ? GROQ_API_KEY   : '';
 
-if (empty($apiKey)) {
+if ($geminiKey !== '') {
+    $apiKey = $geminiKey;
+    $url    = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
+    $model  = 'gemini-2.0-flash';
+} elseif ($groqKey !== '') {
+    $apiKey = $groqKey;
+    $url    = 'https://api.groq.com/openai/v1/chat/completions';
+    $model  = 'meta-llama/llama-4-scout-17b-16e-instruct';
+} else {
     http_response_code(500);
-    echo json_encode(['error' => 'Groq API key belum dikonfigurasi di config.php']);
+    echo json_encode(['error' => 'API key AI belum dikonfigurasi. Isi GEMINI_API_KEY (atau GROQ_API_KEY) di file .env.']);
     exit;
 }
 
-// llama-4-scout: 30K TPM, 500K TPD — terbaik untuk proyek ini
-// Max output: 1hr=2000, 2hr=3200, 3hr=4500
+// Batas panjang jawaban disesuaikan durasi trip: 1hr=2000, 2hr=3200, 3hr=4500
 $max_tokens = [1 => 2000, 2 => 3200, 3 => 4500][$durasi] ?? 2000;
 
-$url  = "https://api.groq.com/openai/v1/chat/completions";
 $body = json_encode([
-    'model'       => 'meta-llama/llama-4-scout-17b-16e-instruct',
+    'model'       => $model,
     'messages'    => [['role' => 'user', 'content' => $prompt]],
     'temperature' => 0.7,
     'max_tokens'  => $max_tokens,
