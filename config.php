@@ -4,10 +4,11 @@
 
 define('GOOGLE_MAPS_API_KEY', getenv('GOOGLE_MAPS_API_KEY') ?: '');
 
-// Penyedia AI untuk itinerary planner. Gemini dipakai lebih dulu; Groq jadi
-// cadangan karena diblokir (403) dari region server produksi. Lihat ai_planner.php.
+// Penyedia AI untuk itinerary planner, dicoba berurutan (lihat ai_planner.php):
+// OpenRouter → Gemini → NVIDIA NIM → Groq. Isi key yang dimiliki saja.
 define('OPENROUTER_API_KEY', getenv('OPENROUTER_API_KEY') ?: '');
 define('GEMINI_API_KEY',      getenv('GEMINI_API_KEY')      ?: '');
+define('NVIDIA_API_KEY',      getenv('NVIDIA_API_KEY')      ?: '');
 define('GROQ_API_KEY',        getenv('GROQ_API_KEY')        ?: '');
 
 // Opsional: true untuk coba foto gratis dari Wikimedia kalau Google tidak menemukan foto.

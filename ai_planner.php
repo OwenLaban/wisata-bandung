@@ -123,7 +123,7 @@ Jangan masukkan restoran yang tidak ada di daftar ke PLACES_JSON. DILARANG menul
 //
 // Setiap provider yang punya key dicoba berurutan; yang gagal (timeout,
 // 4xx, 5xx, respons kosong) dilewati ke berikutnya. Yang pertama sukses
-// dipakai. Urutan: OpenRouter → Gemini → Groq.
+// dipakai. Urutan: OpenRouter → Gemini → NVIDIA → Groq.
 //
 // Kenapa urutan ini: dari server produksi (Azure East Asia) Groq menjawab
 // 403 sebelum key diperiksa, dan Gemini menolak lokasi ("User location is
@@ -132,17 +132,20 @@ Jangan masukkan restoran yang tidak ada di daftar ke PLACES_JSON. DILARANG menul
 // hanya soal kecepatan, bukan bisa/tidak.
 //
 // Model dibaca dari env agar ganti ID tidak perlu edit kode:
-// OPENROUTER_MODEL (default di bawah), GEMINI_MODEL (default gemini-3.6-flash).
+// OPENROUTER_MODEL (daftar koma, default di bawah), GEMINI_MODEL
+// (default gemini-3.6-flash), NVIDIA_MODEL (default z-ai/glm-5.2).
 // Catatan: gemini-2.0-flash dan 2.5-flash sudah retired untuk project baru.
 $openrouterKey = defined('OPENROUTER_API_KEY') ? OPENROUTER_API_KEY : '';
 $groqKey       = defined('GROQ_API_KEY')       ? GROQ_API_KEY       : '';
 $geminiKey     = defined('GEMINI_API_KEY')     ? GEMINI_API_KEY     : '';
+$nvidiaKey     = defined('NVIDIA_API_KEY')     ? NVIDIA_API_KEY     : '';
 
 // OPENROUTER_MODEL boleh daftar koma: dicoba satu per satu, misal
 // "nvidia/nemotron-3-ultra-550b-a55b:free,nvidia/nemotron-3.5-lightning:free".
 // Berguna saat satu model upstream sedang overload / rate-limit.
-$openrouterModels = array_filter(array_map('trim', explode(',', getenv('OPENROUTER_MODEL') ?: 'nvidia/nemotron-3.5-lightning:free,nvidia/nemotron-3-ultra-550b-a55b:free,google/gemma-4-31b-it:free')));
+$openrouterModels = array_filter(array_map('trim', explode(',', getenv('OPENROUTER_MODEL') ?: 'nvidia/nemotron-3.5-lightning:free,nvidia/nemotron-3-ultra-550b-a55b:free,google/gemma-4-31b-it:free,poolside/laguna-s-2.1:free,cohere/north-mini-code:free')));
 $geminiModel      = getenv('GEMINI_MODEL') ?: 'gemini-3.6-flash';
+$nvidiaModel      = getenv('NVIDIA_MODEL') ?: 'z-ai/glm-5.2';
 
 $providers = [];
 if ($openrouterKey !== '') {
@@ -167,6 +170,16 @@ if ($geminiKey !== '') {
         'model' => $geminiModel,
     ];
 }
+if ($nvidiaKey !== '') {
+    // NVIDIA NIM langsung (build.nvidia.com) — infra beda dari OpenRouter,
+    // jadi tetap berguna saat upstream OpenRouter seret. Konteks s/d 1M.
+    $providers[] = [
+        'name'  => 'nvidia',
+        'url'   => 'https://integrate.api.nvidia.com/v1/chat/completions',
+        'key'   => $nvidiaKey,
+        'model' => $nvidiaModel,
+    ];
+}
 if ($groqKey !== '') {
     // Groq diblokir (403) dari region server produksi; hanya berguna di laptop
     // atau kalau server pindah region.
@@ -180,7 +193,7 @@ if ($groqKey !== '') {
 
 if (!$providers) {
     http_response_code(500);
-    echo json_encode(['error' => 'API key AI belum dikonfigurasi. Isi OPENROUTER_API_KEY, GEMINI_API_KEY, atau GROQ_API_KEY di file .env.']);
+    echo json_encode(['error' => 'API key AI belum dikonfigurasi. Isi OPENROUTER_API_KEY, GEMINI_API_KEY, NVIDIA_API_KEY, atau GROQ_API_KEY di file .env.']);
     exit;
 }
 
