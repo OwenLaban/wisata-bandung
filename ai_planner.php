@@ -123,7 +123,7 @@ Jangan masukkan restoran yang tidak ada di daftar ke PLACES_JSON. DILARANG menul
 //
 // Setiap provider yang punya key dicoba berurutan; yang gagal (timeout,
 // 4xx, 5xx, respons kosong) dilewati ke berikutnya. Yang pertama sukses
-// dipakai. Urutan: OpenRouter → NVIDIA → Gemini → Groq.
+// dipakai. Urutan: OpenRouter → Mistral → NVIDIA → Gemini → Groq.
 //
 // Kenapa urutan ini: dari server produksi (Azure East Asia) Groq menjawab
 // 403 sebelum key diperiksa, dan Gemini menolak lokasi ("User location is
@@ -139,6 +139,7 @@ $openrouterKey = defined('OPENROUTER_API_KEY') ? OPENROUTER_API_KEY : '';
 $groqKey       = defined('GROQ_API_KEY')       ? GROQ_API_KEY       : '';
 $geminiKey     = defined('GEMINI_API_KEY')     ? GEMINI_API_KEY     : '';
 $nvidiaKey     = defined('NVIDIA_API_KEY')     ? NVIDIA_API_KEY     : '';
+$mistralKey    = defined('MISTRAL_API_KEY')    ? MISTRAL_API_KEY    : '';
 
 // OPENROUTER_MODEL boleh daftar koma: dicoba satu per satu, misal
 // "nvidia/nemotron-3-ultra-550b-a55b:free,nvidia/nemotron-3.5-lightning:free".
@@ -146,6 +147,7 @@ $nvidiaKey     = defined('NVIDIA_API_KEY')     ? NVIDIA_API_KEY     : '';
 $openrouterModels = array_filter(array_map('trim', explode(',', getenv('OPENROUTER_MODEL') ?: 'nvidia/nemotron-3.5-lightning:free,nvidia/nemotron-3-ultra-550b-a55b:free,google/gemma-4-31b-it:free,poolside/laguna-s-2.1:free,cohere/north-mini-code:free')));
 $geminiModel      = getenv('GEMINI_MODEL') ?: 'gemini-3.6-flash';
 $nvidiaModel      = getenv('NVIDIA_MODEL') ?: 'nvidia/nemotron-3-ultra-550b-a55b';
+$mistralModel     = getenv('MISTRAL_MODEL') ?: 'mistral-small-latest';
 
 $providers = [];
 if ($openrouterKey !== '') {
@@ -161,6 +163,18 @@ if ($openrouterKey !== '') {
             ],
         ];
     }
+}
+if ($mistralKey !== '') {
+    // Mistral La Plateforme (console.mistral.ai) — tier Experiment gratis
+    // ~1 miliar token/bulan, konteks 32K+. OpenAI-compatible, cepat.
+    // Ditaruh sebelum NVIDIA karena model kecilnya jauh lebih responsif
+    // daripada 550B di free tier.
+    $providers[] = [
+        'name'  => 'mistral',
+        'url'   => 'https://api.mistral.ai/v1/chat/completions',
+        'key'   => $mistralKey,
+        'model' => $mistralModel,
+    ];
 }
 if ($nvidiaKey !== '') {
     // NVIDIA NIM langsung (build.nvidia.com) — infra beda dari OpenRouter,
@@ -196,7 +210,7 @@ if ($groqKey !== '') {
 
 if (!$providers) {
     http_response_code(500);
-    echo json_encode(['error' => 'API key AI belum dikonfigurasi. Isi OPENROUTER_API_KEY, GEMINI_API_KEY, NVIDIA_API_KEY, atau GROQ_API_KEY di file .env.']);
+    echo json_encode(['error' => 'API key AI belum dikonfigurasi. Isi OPENROUTER_API_KEY, MISTRAL_API_KEY, GEMINI_API_KEY, NVIDIA_API_KEY, atau GROQ_API_KEY di file .env.']);
     exit;
 }
 
