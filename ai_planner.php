@@ -133,13 +133,13 @@ Jangan masukkan restoran yang tidak ada di daftar ke PLACES_JSON. Jawab dalam Ba
 // Groq tetap dipertahankan sebagai cadangan: kalau GEMINI_API_KEY kosong tapi
 // GROQ_API_KEY terisi, Groq yang dipakai. Berguna saat mengembangkan di laptop,
 // atau kalau server nanti pindah ke region yang tidak diblokir.
-$geminiKey = defined('GEMINI_API_KEY') ? GEMINI_API_KEY : '';
+$openrouterKey = defined('OPENROUTER_API_KEY') ? OPENROUTER_API_KEY : '';
 $groqKey   = defined('GROQ_API_KEY')   ? GROQ_API_KEY   : '';
 
-if ($geminiKey !== '') {
-    $apiKey = $geminiKey;
-    $url    = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
-    $model  = 'gemini-2.0-flash';
+if ($openrouterKey !== '') {
+    $apiKey = $openrouterKey;
+    $url    = 'https://openrouter.ai/api/v1/chat/completions';
+    $model  = 'google/gemma-4-31b-it:free';
 } elseif ($groqKey !== '') {
     $apiKey = $groqKey;
     $url    = 'https://api.groq.com/openai/v1/chat/completions';
