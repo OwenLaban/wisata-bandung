@@ -123,7 +123,7 @@ Jangan masukkan restoran yang tidak ada di daftar ke PLACES_JSON. DILARANG menul
 //
 // Setiap provider yang punya key dicoba berurutan; yang gagal (timeout,
 // 4xx, 5xx, respons kosong) dilewati ke berikutnya. Yang pertama sukses
-// dipakai. Urutan: OpenRouter → Gemini → NVIDIA → Groq.
+// dipakai. Urutan: OpenRouter → NVIDIA → Gemini → Groq.
 //
 // Kenapa urutan ini: dari server produksi (Azure East Asia) Groq menjawab
 // 403 sebelum key diperiksa, dan Gemini menolak lokasi ("User location is
@@ -145,7 +145,7 @@ $nvidiaKey     = defined('NVIDIA_API_KEY')     ? NVIDIA_API_KEY     : '';
 // Berguna saat satu model upstream sedang overload / rate-limit.
 $openrouterModels = array_filter(array_map('trim', explode(',', getenv('OPENROUTER_MODEL') ?: 'nvidia/nemotron-3.5-lightning:free,nvidia/nemotron-3-ultra-550b-a55b:free,google/gemma-4-31b-it:free,poolside/laguna-s-2.1:free,cohere/north-mini-code:free')));
 $geminiModel      = getenv('GEMINI_MODEL') ?: 'gemini-3.6-flash';
-$nvidiaModel      = getenv('NVIDIA_MODEL') ?: 'z-ai/glm-5.2';
+$nvidiaModel      = getenv('NVIDIA_MODEL') ?: 'nvidia/nemotron-3-ultra-550b-a55b';
 
 $providers = [];
 if ($openrouterKey !== '') {
@@ -162,22 +162,24 @@ if ($openrouterKey !== '') {
         ];
     }
 }
+if ($nvidiaKey !== '') {
+    // NVIDIA NIM langsung (build.nvidia.com) — infra beda dari OpenRouter,
+    // jadi tetap berguna saat upstream OpenRouter seret. Konteks s/d 1M.
+    // Ditaruh sebelum Gemini karena Gemini deterministik gagal dari region
+    // server produksi ("User location is not supported").
+    $providers[] = [
+        'name'  => 'nvidia',
+        'url'   => 'https://integrate.api.nvidia.com/v1/chat/completions',
+        'key'   => $nvidiaKey,
+        'model' => $nvidiaModel,
+    ];
+}
 if ($geminiKey !== '') {
     $providers[] = [
         'name'  => 'gemini',
         'url'   => 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
         'key'   => $geminiKey,
         'model' => $geminiModel,
-    ];
-}
-if ($nvidiaKey !== '') {
-    // NVIDIA NIM langsung (build.nvidia.com) — infra beda dari OpenRouter,
-    // jadi tetap berguna saat upstream OpenRouter seret. Konteks s/d 1M.
-    $providers[] = [
-        'name'  => 'nvidia',
-        'url'   => 'https://integrate.api.nvidia.com/v1/chat/completions',
-        'key'   => $nvidiaKey,
-        'model' => $nvidiaModel,
     ];
 }
 if ($groqKey !== '') {
@@ -226,8 +228,10 @@ $t0        = microtime(true);
 foreach ($providers as $p) {
     // Anggaran total ±55 detik supaya PHP selalu sempat menjawab JSON
     // sebelum nginx (proxy_read_timeout 60s) memutus dengan halaman 504
-    // yang memicu "Unexpected token '<'" di frontend.
-    $timeout = (int)max(8, min(40, 55 - (microtime(true) - $t0)));
+    // yang memicu "Unexpected token '<'" di frontend. Cap 25 dtk/percobaan:
+    // upstream free yang hanya menetes (ratusan byte) praktis tidak akan
+    // selesai — lebih baik jatah diberikan ke provider berikutnya.
+    $timeout = (int)max(8, min(25, 55 - (microtime(true) - $t0)));
     if ($lastError !== '' && $timeout <= 8) break;
     $payload = [
         'model'       => $p['model'],
