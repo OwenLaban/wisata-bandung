@@ -209,7 +209,13 @@ function extractProviderError($response, $curlErr, $httpCode) {
 $fullText  = '';
 $lastCode  = 0;
 $lastError = '';
+$t0        = microtime(true);
 foreach ($providers as $p) {
+    // Anggaran total ±55 detik supaya PHP selalu sempat menjawab JSON
+    // sebelum nginx (proxy_read_timeout 60s) memutus dengan halaman 504
+    // yang memicu "Unexpected token '<'" di frontend.
+    $timeout = (int)max(8, min(40, 55 - (microtime(true) - $t0)));
+    if ($lastError !== '' && $timeout <= 8) break;
     $payload = [
         'model'       => $p['model'],
         'messages'    => [['role' => 'user', 'content' => $prompt]],
@@ -233,7 +239,7 @@ foreach ($providers as $p) {
         CURLOPT_POST           => true,
         CURLOPT_POSTFIELDS     => $body,
         CURLOPT_HTTPHEADER     => $headers,
-        CURLOPT_TIMEOUT        => 40,
+        CURLOPT_TIMEOUT        => $timeout,
     ]);
 
     $response = curl_exec($ch);

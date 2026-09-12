@@ -2746,7 +2746,13 @@ async function generateItinerary() {
       headers: { 'Content-Type': 'application/json' },
       body   : JSON.stringify(payload),
     });
-    const data = await res.json();
+    // Backend selalu menjawab JSON, TAPI proxy (504/502) bisa menyela dengan
+    // halaman HTML saat AI lambat — jangan lempar "Unexpected token '<'" mentah.
+    if (!res.ok) throw new Error('Server sibuk (HTTP ' + res.status + '). Tunggu sebentar lalu coba lagi.');
+    const resText = await res.text();
+    let data;
+    try { data = JSON.parse(resText); }
+    catch (e) { throw new Error('Respons server tidak valid. Coba lagi.'); }
 
     if (data.error) throw new Error(data.error);
 

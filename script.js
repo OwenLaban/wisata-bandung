@@ -804,7 +804,14 @@ function submitAIPlannerMap() {
         headers: { 'Content-Type': 'application/json' },
         body   : JSON.stringify({ durasi: _mapDurasi, minat: _mapMinat, budget: _mapBudget, orang: _mapOrang }),
     })
-    .then(function(r) { return r.json(); })
+    .then(function(r) {
+        // Proxy (504/502) bisa menyela dengan halaman HTML saat AI lambat.
+        if (!r.ok) throw new Error('Server sibuk (HTTP ' + r.status + '). Tunggu sebentar lalu coba lagi.');
+        return r.text().then(function(t) {
+            try { return JSON.parse(t); }
+            catch (e) { throw new Error('Respons server tidak valid. Coba lagi.'); }
+        });
+    })
     .then(function(data) {
         if (data.error) throw new Error(data.error);
         if (result) {
