@@ -115,92 +115,172 @@ FORMAT WAJIB — gunakan tabel markdown untuk jadwal setiap hari:
 
 Setelah itinerary tambahkan TEPAT seperti ini:
 ##PLACES_JSON##
-[{\"jam\":\"07.30\",\"hari\":1,\"nama\":\"Nama Persis\"},{\"jam\":\"10.00\",\"hari\":1,\"nama\":\"Nama Persis\"}]
+[{\"jam\":\"07.30\",\"hari\":1,\"nama\":\"Tangkuban Perahu\"},{\"jam\":\"10.00\",\"hari\":1,\"nama\":\"Floating Market Lembang\"}] (contoh format saja — GANTI dengan nama destinasi sebenarnya dari itinerary di atas)
 ##END_PLACES##
-Jangan masukkan restoran yang tidak ada di daftar ke PLACES_JSON. Jawab dalam Bahasa Indonesia.";
+Jangan masukkan restoran yang tidak ada di daftar ke PLACES_JSON. DILARANG menulis proses berpikir, analisis, atau rencana kasar — langsung tulis itinerary final. Jawab dalam Bahasa Indonesia.";
 
-// Pemilihan penyedia AI.
+// Pemilihan penyedia AI — rantai fallback.
 //
-// Groq memblokir wilayah tempat server produksi berada (Azure East Asia): setiap
-// permintaan dari sana dijawab 403 Forbidden bahkan sebelum API key diperiksa —
-// key palsu pun ditolak dengan cara yang sama. Jadi Groq tidak bisa dipakai dari
-// server, meski jalan normal dari komputer lokal.
+// Setiap provider yang punya key dicoba berurutan; yang gagal (timeout,
+// 4xx, 5xx, respons kosong) dilewati ke berikutnya. Yang pertama sukses
+// dipakai. Urutan: OpenRouter → Gemini → Groq.
 //
-// Gemini dipilih sebagai penyedia utama karena bisa diakses dari sana dan
-// menyediakan endpoint OpenAI-compatible, sehingga bentuk permintaan dan
-// pembacaan respons di bawah tidak perlu berubah.
+// Kenapa urutan ini: dari server produksi (Azure East Asia) Groq menjawab
+// 403 sebelum key diperiksa, dan Gemini menolak lokasi ("User location is
+// not supported"). OpenRouter lolos karena upstream melihat IP OpenRouter,
+// bukan IP server. Dari laptop semua provider jalan, jadi urutan di sana
+// hanya soal kecepatan, bukan bisa/tidak.
 //
-// Groq tetap dipertahankan sebagai cadangan: kalau GEMINI_API_KEY kosong tapi
-// GROQ_API_KEY terisi, Groq yang dipakai. Berguna saat mengembangkan di laptop,
-// atau kalau server nanti pindah ke region yang tidak diblokir.
+// Model dibaca dari env agar ganti ID tidak perlu edit kode:
+// OPENROUTER_MODEL (default di bawah), GEMINI_MODEL (default gemini-3.6-flash).
+// Catatan: gemini-2.0-flash dan 2.5-flash sudah retired untuk project baru.
 $openrouterKey = defined('OPENROUTER_API_KEY') ? OPENROUTER_API_KEY : '';
-$groqKey   = defined('GROQ_API_KEY')   ? GROQ_API_KEY   : '';
+$groqKey       = defined('GROQ_API_KEY')       ? GROQ_API_KEY       : '';
+$geminiKey     = defined('GEMINI_API_KEY')     ? GEMINI_API_KEY     : '';
 
+// OPENROUTER_MODEL boleh daftar koma: dicoba satu per satu, misal
+// "nvidia/nemotron-3-ultra-550b-a55b:free,nvidia/nemotron-3.5-lightning:free".
+// Berguna saat satu model upstream sedang overload / rate-limit.
+$openrouterModels = array_filter(array_map('trim', explode(',', getenv('OPENROUTER_MODEL') ?: 'nvidia/nemotron-3.5-lightning:free,nvidia/nemotron-3-ultra-550b-a55b:free,google/gemma-4-31b-it:free')));
+$geminiModel      = getenv('GEMINI_MODEL') ?: 'gemini-3.6-flash';
+
+$providers = [];
 if ($openrouterKey !== '') {
-    $apiKey = $openrouterKey;
-    $url    = 'https://openrouter.ai/api/v1/chat/completions';
-    $model  = 'google/gemma-4-31b-it:free';
-} elseif ($groqKey !== '') {
-    $apiKey = $groqKey;
-    $url    = 'https://api.groq.com/openai/v1/chat/completions';
-    $model  = 'meta-llama/llama-4-scout-17b-16e-instruct';
-} else {
+    foreach ($openrouterModels as $m) {
+        $providers[] = [
+            'name'    => 'openrouter',
+            'url'     => 'https://openrouter.ai/api/v1/chat/completions',
+            'key'     => $openrouterKey,
+            'model'   => $m,
+            'headers' => [
+                'HTTP-Referer: https://wisatabandung.duckdns.org',
+                'X-Title: WisataBandung',
+            ],
+        ];
+    }
+}
+if ($geminiKey !== '') {
+    $providers[] = [
+        'name'  => 'gemini',
+        'url'   => 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+        'key'   => $geminiKey,
+        'model' => $geminiModel,
+    ];
+}
+if ($groqKey !== '') {
+    // Groq diblokir (403) dari region server produksi; hanya berguna di laptop
+    // atau kalau server pindah region.
+    $providers[] = [
+        'name'  => 'groq',
+        'url'   => 'https://api.groq.com/openai/v1/chat/completions',
+        'key'   => $groqKey,
+        'model' => 'meta-llama/llama-4-scout-17b-16e-instruct',
+    ];
+}
+
+if (!$providers) {
     http_response_code(500);
-    echo json_encode(['error' => 'API key AI belum dikonfigurasi. Isi GEMINI_API_KEY (atau GROQ_API_KEY) di file .env.']);
+    echo json_encode(['error' => 'API key AI belum dikonfigurasi. Isi OPENROUTER_API_KEY, GEMINI_API_KEY, atau GROQ_API_KEY di file .env.']);
     exit;
 }
 
 // Batas panjang jawaban disesuaikan durasi trip: 1hr=2000, 2hr=3200, 3hr=4500
 $max_tokens = [1 => 2000, 2 => 3200, 3 => 4500][$durasi] ?? 2000;
 
-$body = json_encode([
-    'model'       => $model,
-    'messages'    => [['role' => 'user', 'content' => $prompt]],
-    'temperature' => 0.7,
-    'max_tokens'  => $max_tokens,
-]);
+// Ambil pesan error dari respons provider dalam berbagai format:
+// {"error":{"message":"..."}} (OpenRouter/Groq),
+// [{"error":{"code":...,"message":"..."}}] (Gemini native, dibungkus array),
+// {"error":"..."} (string langsung), {"message":"..."}.
+function extractProviderError($response, $curlErr, $httpCode) {
+    if ($response === false || $response === '') {
+        return $curlErr !== '' ? ('Jaringan: ' . $curlErr) : ('HTTP ' . $httpCode . ' tanpa respons.');
+    }
+    $detail = json_decode($response, true);
+    if (is_array($detail) && isset($detail[0]['error'])) $detail = $detail[0]; // bungkus array ala Gemini
+    if (is_array($detail)) {
+        if (isset($detail['error']['message'])) return (string)$detail['error']['message'];
+        if (isset($detail['error']) && is_string($detail['error'])) return $detail['error'];
+        if (isset($detail['message']) && is_string($detail['message'])) return $detail['message'];
+    }
+    $trimmed = trim(preg_replace('/\s+/', ' ', (string)$response));
+    return $trimmed !== '' ? substr($trimmed, 0, 200) : ('HTTP ' . $httpCode . ' tanpa pesan.');
+}
 
-$ch = curl_init($url);
-curl_setopt_array($ch, [
-    CURLOPT_RETURNTRANSFER => true,
-    CURLOPT_POST           => true,
-    CURLOPT_POSTFIELDS     => $body,
-    CURLOPT_HTTPHEADER     => [
+$fullText  = '';
+$lastCode  = 0;
+$lastError = '';
+foreach ($providers as $p) {
+    $payload = [
+        'model'       => $p['model'],
+        'messages'    => [['role' => 'user', 'content' => $prompt]],
+        'temperature' => 0.7,
+        'max_tokens'  => $max_tokens,
+    ];
+    // Model reasoning (Nemotron dkk) kadang menaruh chain-of-thought di
+    // content; minta OpenRouter membuangnya agar yang datang itinerary jadi.
+    if ($p['name'] === 'openrouter') $payload['reasoning'] = ['exclude' => true];
+    $body = json_encode($payload);
+
+    $headers = [
         'Content-Type: application/json',
-        'Authorization: Bearer ' . $apiKey,
-    ],
-    CURLOPT_TIMEOUT => 30,
-]);
+        'Authorization: Bearer ' . $p['key'],
+    ];
+    if (!empty($p['headers'])) $headers = array_merge($headers, $p['headers']);
 
-$response = curl_exec($ch);
-$httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-curl_close($ch);
+    $ch = curl_init($p['url']);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST           => true,
+        CURLOPT_POSTFIELDS     => $body,
+        CURLOPT_HTTPHEADER     => $headers,
+        CURLOPT_TIMEOUT        => 40,
+    ]);
 
-if ($response === false || $httpCode !== 200) {
-    $detail = $response ? json_decode($response, true) : null;
-    $rawMsg = $detail['error']['message'] ?? '';
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curlErr  = curl_error($ch);
+    curl_close($ch);
+
+    if ($response !== false && $httpCode === 200) {
+        $data      = json_decode($response, true);
+        $candidate = $data['choices'][0]['message']['content'] ?? '';
+        // Tolak jawaban yang bukan itinerary jadi (mis. chain-of-thought
+        // mentah): wajib ada tabel markdown DAN blok PLACES_JSON.
+        if ($candidate !== '' && strpos($candidate, '|') !== false
+            && stripos($candidate, '##PLACES_JSON##') !== false
+            && stripos($candidate, '##END_PLACES##') !== false) {
+            $fullText = $candidate;
+            break;
+        }
+        $lastCode  = $httpCode;
+        $lastError = 'Format tak lengkap dari ' . $p['name'] . '/' . $p['model'] . '.';
+        error_log('[ai_planner] coba gagal: format tak lengkap ' . $p['name'] . '/' . $p['model']);
+        continue;
+    }
+
+    $lastCode  = $httpCode;
+    $lastError = '[' . $p['name'] . '/' . $p['model'] . '] ' . extractProviderError($response, $curlErr, $httpCode);
+    error_log('[ai_planner] coba gagal: http=' . $httpCode . ' ' . substr($lastError, 0, 160));
+}
+
+if (!$fullText) {
+    $rawMsg = $lastError;
     // Terjemahkan pesan rate-limit ke bahasa yang ramah
-    if ($httpCode === 429 || stripos($rawMsg, 'rate limit') !== false || stripos($rawMsg, 'tokens per day') !== false) {
+    if ($lastCode === 429 || stripos($rawMsg, 'rate limit') !== false || stripos($rawMsg, 'tokens per day') !== false) {
         // Coba ekstrak waktu tunggu dari pesan
         $wait = '';
         if (preg_match('/try again in ([\d]+m[\d.]+s)/i', $rawMsg, $wm)) {
             $wait = ' Coba lagi dalam ±' . $wm[1] . '.';
         }
         $msg = '⏳ Kuota AI harian sedang penuh.' . $wait . ' Silakan tunggu beberapa menit lalu coba lagi.';
+    } elseif (stripos($rawMsg, 'no longer available') !== false || stripos($rawMsg, 'No endpoints found') !== false) {
+        $msg = '⏳ Model AI sedang tidak tersedia. Coba lagi beberapa saat.';
     } else {
-        $msg = $rawMsg ?: 'Gagal menghubungi AI. Coba lagi.';
+        $msg = $rawMsg !== '' ? $rawMsg : 'Gagal menghubungi AI. Coba lagi.';
     }
+    error_log('[ai_planner] semua provider gagal: ' . $rawMsg);
     http_response_code(500);
     echo json_encode(['error' => $msg]);
-    exit;
-}
-
-$data     = json_decode($response, true);
-$fullText = $data['choices'][0]['message']['content'] ?? '';
-
-if (!$fullText) {
-    http_response_code(500);
-    echo json_encode(['error' => 'AI tidak menghasilkan respons.']);
     exit;
 }
 
@@ -210,7 +290,14 @@ $itinerary = $fullText;
 
 if (preg_match('/##PLACES_JSON##\s*([\s\S]*?)\s*##END_PLACES##/i', $fullText, $m)) {
     $itinerary = trim(str_replace($m[0], '', $fullText));
-    $decoded   = json_decode(trim($m[1]), true);
+    $jsonText  = trim($m[1]);
+    // Model kadang membungkus JSON dalam fence ```json ... ``` — kupas dulu.
+    $jsonText  = preg_replace('/^```[a-z]*\s*/i', '', $jsonText);
+    $jsonText  = preg_replace('/\s*```$/', '', $jsonText);
+    $decoded   = json_decode(trim($jsonText), true);
+    if (!is_array($decoded) && preg_match('/\[[\s\S]*\]/', $jsonText, $mm)) {
+        $decoded = json_decode($mm[0], true); // fallback: ambil larik [...] pertama
+    }
     if (is_array($decoded)) $placesRaw = $decoded;
 }
 
