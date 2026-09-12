@@ -23,7 +23,7 @@ RUN set -eu; \
 
 COPY . /var/www/html/
 
-RUN mkdir -p www-data:www-data /var/www/html/cache \
+RUN chown -R www-data:www-data /var/www/html/cache \
     && chmod -R 775 /var/www/html/cache
 
 EXPOSE 80
