@@ -172,6 +172,7 @@ if ($nvidiaKey !== '') {
         'url'   => 'https://integrate.api.nvidia.com/v1/chat/completions',
         'key'   => $nvidiaKey,
         'model' => $nvidiaModel,
+        'timeout' => 50, // model 550B butuh TTFT lama untuk prompt besar
     ];
 }
 if ($geminiKey !== '') {
@@ -228,10 +229,12 @@ $t0        = microtime(true);
 foreach ($providers as $p) {
     // Anggaran total ±55 detik supaya PHP selalu sempat menjawab JSON
     // sebelum nginx (proxy_read_timeout 60s) memutus dengan halaman 504
-    // yang memicu "Unexpected token '<'" di frontend. Cap 25 dtk/percobaan:
-    // upstream free yang hanya menetes (ratusan byte) praktis tidak akan
-    // selesai — lebih baik jatah diberikan ke provider berikutnya.
-    $timeout = (int)max(8, min(25, 55 - (microtime(true) - $t0)));
+    // yang memicu "Unexpected token '<'" di frontend. Cap default 25 dtk/
+    // percobaan: upstream free yang hanya menetes (ratusan byte) praktis
+    // tidak akan selesai — lebih baik jatah diberikan ke provider berikut.
+    // Provider boleh minta timeout lebih besar via 'timeout' (mis. NVIDIA
+    // butuh TTFT lama untuk prompt besar di model 550B).
+    $timeout = (int)max(8, min($p['timeout'] ?? 25, 55 - (microtime(true) - $t0)));
     if ($lastError !== '' && $timeout <= 8) break;
     $payload = [
         'model'       => $p['model'],
